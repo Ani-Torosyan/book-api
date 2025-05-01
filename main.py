@@ -27,25 +27,47 @@ unique_genres = sorted(set(g for genres in books_df["Genres"].dropna() for g in 
 
 
 class RecommendationRequest(BaseModel):
-    genre: str  # Single genre selected by the user
-    level: str  # Single CEFR level selected by the user
+    genres: list[str]  # List of genres selected by the user
+    levels: list[str]  # List of CEFR levels selected by the user
+
+
+def assign_genre_weights(genres):
+    genre_list = genres.split(", ")
+    weights = {genre: 1 / (i + 1) for i, genre in enumerate(genre_list)}
+    return [weights.get(genre, 0) for genre in unique_genres]
+
+books_df = books_df.dropna(subset=["Genres", "Age"])
+books_df["Age"] = books_df["Age"].astype(int)
+books_df[unique_genres] = books_df["Genres"].apply(assign_genre_weights).apply(pd.Series)
+
 
 @app.post("/recommend")
 async def recommend(request: RecommendationRequest):
-    genre = request.genre
-    level = request.level
+    genres = request.genres
+    levels = request.levels
 
-    # Validate the CEFR level
-    if level not in cefr_ages:
-        return {"success": False, "message": f"Invalid CEFR level: {level}"}
+    # Validate CEFR levels
+    for level in levels:
+        if level not in cefr_ages:
+            return {"success": False, "message": f"Invalid CEFR level: {level}"}
 
-    # Get the age range for the provided level
-    min_age, max_age = cefr_ages[level]
+    if not levels:
+        return {"success": False, "message": "No CEFR levels provided."}
 
-    # Filter books based on the genre and the age range
-    filtered = books_df[
-        books_df["Genres"].apply(lambda x: genre in x) &
-        (books_df["Age"] >= min_age) &
+    # Prepare the combined age range based on levels
+    age_range = [cefr_ages[level] for level in levels]
+
+    # If age_range is empty, return an error
+    if not age_range:
+        return {"success": False, "message": "Age range could not be determined from the provided levels."}
+
+    min_age = min([age[0] for age in age_range])
+    max_age = max([age[1] for age in age_range])
+
+    # Filter books based on genres and the combined age range
+    filtered = books_df[ 
+        books_df["Genres"].apply(lambda x: any(g in x for g in genres)) & 
+        (books_df["Age"] >= min_age) & 
         (books_df["Age"] <= max_age)
     ]
 
@@ -59,10 +81,11 @@ async def recommend(request: RecommendationRequest):
     knn = NearestNeighbors(metric="cosine")
     knn.fit(X_normalized)
 
-    # Create a target vector based on the selected genre
+    # Create a target vector based on the selected genres
     target_vector = np.zeros(len(unique_genres) + 1)
-    if genre in unique_genres:
-        target_vector[unique_genres.index(genre)] = 1
+    for genre in genres:
+        if genre in unique_genres:
+            target_vector[unique_genres.index(genre)] = 1
     target_vector[-1] = (min_age + max_age) / 2  # Midpoint of the age range
 
     distances, indices = knn.kneighbors([target_vector], n_neighbors=len(filtered))
