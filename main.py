@@ -51,13 +51,21 @@ async def recommend(request: RecommendationRequest):
         if level not in cefr_ages:
             return {"success": False, "message": f"Invalid CEFR level: {level}"}
 
+    if not levels:
+        return {"success": False, "message": "No CEFR levels provided."}
+
     # Prepare the combined age range based on levels
     age_range = [cefr_ages[level] for level in levels]
+
+    # If age_range is empty, return an error
+    if not age_range:
+        return {"success": False, "message": "Age range could not be determined from the provided levels."}
+
     min_age = min([age[0] for age in age_range])
     max_age = max([age[1] for age in age_range])
 
     # Filter books based on genres and the combined age range
-    filtered = books_df[
+    filtered = books_df[ 
         books_df["Genres"].apply(lambda x: any(g in x for g in genres)) & 
         (books_df["Age"] >= min_age) & 
         (books_df["Age"] <= max_age)
@@ -86,6 +94,5 @@ async def recommend(request: RecommendationRequest):
 
     return {
         "success": True,
-        "data": result.sort_values("Distance")[[ "Title", "Author", "Genres", "Age"]].to_dict(orient="records")
+        "data": result.sort_values("Distance")[["Title", "Author", "Genres", "Age"]].to_dict(orient="records")
     }
-
