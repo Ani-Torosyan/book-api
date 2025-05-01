@@ -94,5 +94,5 @@ async def recommend(request: RecommendationRequest):
 
     return {
         "success": True,
-        "data": result.sort_values("Distance")[["Title", "Author", "Genres", "Age"]].to_dict(orient="records")
+        "data": result.sort_values("Distance")[["Title", "Author", "Genres", "Age", "Image URL"]].to_dict(orient="records")
     }
