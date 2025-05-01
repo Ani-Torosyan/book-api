@@ -10,7 +10,7 @@ app = FastAPI()
 # Allow requests from your frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # use specific domain in production
+    allow_origins=["https://armling.vercel.app"],  # use specific domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
