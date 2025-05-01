@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -24,6 +25,12 @@ cefr_ages = {
 
 unique_genres = sorted(set(g for genres in books_df["Genres"].dropna() for g in genres.split(", ")))
 
+
+class RecommendationRequest(BaseModel):
+    genres: list[str]  # List of genres selected by the user
+    levels: list[str]  # List of CEFR levels selected by the user
+
+
 def assign_genre_weights(genres):
     genre_list = genres.split(", ")
     weights = {genre: 1 / (i + 1) for i, genre in enumerate(genre_list)}
@@ -33,31 +40,45 @@ books_df = books_df.dropna(subset=["Genres", "Age"])
 books_df["Age"] = books_df["Age"].astype(int)
 books_df[unique_genres] = books_df["Genres"].apply(assign_genre_weights).apply(pd.Series)
 
-@app.get("/recommend")
-async def recommend(genre: str, level: str):
-    if level not in cefr_ages:
-        return {"success": False, "message": "Invalid CEFR level."}
 
-    age_range = cefr_ages[level]
+@app.post("/recommend")
+async def recommend(request: RecommendationRequest):
+    genres = request.genres
+    levels = request.levels
+
+    # Validate CEFR levels
+    for level in levels:
+        if level not in cefr_ages:
+            return {"success": False, "message": f"Invalid CEFR level: {level}"}
+
+    # Prepare the combined age range based on levels
+    age_range = [cefr_ages[level] for level in levels]
+    min_age = min([age[0] for age in age_range])
+    max_age = max([age[1] for age in age_range])
+
+    # Filter books based on genres and the combined age range
     filtered = books_df[
-        books_df["Genres"].str.contains(genre, na=False) &
-        (books_df["Age"] >= age_range[0]) &
-        (books_df["Age"] <= age_range[1])
+        books_df["Genres"].apply(lambda x: any(g in x for g in genres)) & 
+        (books_df["Age"] >= min_age) & 
+        (books_df["Age"] <= max_age)
     ]
 
     if filtered.empty:
         return {"success": True, "data": []}
 
+    # Prepare the features for KNN (including genre weights and age)
     X = filtered[unique_genres + ["Age"]]
     X_normalized = X.div(np.linalg.norm(X, axis=1, keepdims=True) + 1e-10)
 
     knn = NearestNeighbors(metric="cosine")
     knn.fit(X_normalized)
 
+    # Create a target vector based on the selected genres
     target_vector = np.zeros(len(unique_genres) + 1)
-    if genre in unique_genres:
-        target_vector[unique_genres.index(genre)] = 1
-    target_vector[-1] = np.mean(age_range)
+    for genre in genres:
+        if genre in unique_genres:
+            target_vector[unique_genres.index(genre)] = 1
+    target_vector[-1] = (min_age + max_age) / 2  # Midpoint of the age range
 
     distances, indices = knn.kneighbors([target_vector], n_neighbors=len(filtered))
     result = filtered.iloc[indices[0]].copy()
@@ -65,7 +86,6 @@ async def recommend(genre: str, level: str):
 
     return {
         "success": True,
-        "data": result.sort_values("Distance")[[
-            "Title", "Author", "Genres", "Age"
-        ]].to_dict(orient="records")
+        "data": result.sort_values("Distance")[[ "Title", "Author", "Genres", "Age"]].to_dict(orient="records")
     }
+
